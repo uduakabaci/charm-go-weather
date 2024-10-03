@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -45,20 +46,30 @@ func (w *Weather) Decode(data []byte) error {
 }
 
 type Model struct {
-	w           Weather
-	table       table.Model
-	currentCity string
-	updating    bool
-	mu          sync.Mutex
-	spinner     spinner.Model
+	input        textinput.Model
+	w            Weather
+	table        table.Model
+	currentCity  string
+	updating     bool
+	gettingInput bool
+	mu           sync.Mutex
+	spinner      spinner.Model
 }
 
 func (m *Model) Init() tea.Cmd {
 	s := spinner.New()
+	input := textinput.New()
+	input.Placeholder = "Enter city name"
+	input.CharLimit = 100
+	input.Width = 50
+	m.input = input
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	m.spinner = s
-	return m.LoadWeather("uyo")
+	// Ask for city on startup
+	return func() tea.Msg {
+		return tea.KeyMsg{Type: tea.KeyCtrlI}
+	}
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -73,20 +84,46 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
+		switch msg.Type {
+		case tea.KeyCtrlC:
 			return m, tea.Quit
+		case tea.KeyCtrlR:
+			return m, m.LoadWeather(m.currentCity)
+		case tea.KeyCtrlI:
+			m.gettingInput = true
+			m.input.Focus()
+			return m, nil
+		case tea.KeyEnter:
+			if m.gettingInput {
+				m.gettingInput = false
+				return m, m.LoadWeather(m.input.Value())
+			}
 		}
 	}
+
+	if m.gettingInput {
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+
 	return m, cmd
 }
 
 func (m *Model) View() string {
+	view := ""
 	if m.updating {
-		return fmt.Sprintf("\n\n   %s Loading weather data...press q to quit\n\n", m.spinner.View())
-	} else {
-		return "\nShowing weather data for " + m.currentCity + " \n" + baseStyle.Render(m.table.View())
+		view = fmt.Sprintf("\n\n   %s Loading weather data...", m.spinner.View())
 	}
+
+	if m.gettingInput {
+		view = fmt.Sprintf("Enter a city to see weather infor: \n\n%s\n\n", m.input.View()) + "\n"
+	}
+
+	if !m.gettingInput && !m.updating {
+		view = "\nShowing weather data for " + m.currentCity + " \n" + baseStyle.Render(m.table.View())
+	}
+
+	return fmt.Sprintf("%s\n\n\nPress ctrl+c to quit, ctrl+r to refresh, ctrl+i to change city", view)
 }
 
 func (m *Model) LoadWeather(city string) tea.Cmd {
